@@ -37,8 +37,10 @@
 use std::error;
 use std::fmt;
 use std::io::Error as IoError;
+use std::io::Read;
 use serde;
 use serde_json;
+use serde_json::Value;
 use Request;
 
 /// Error that can happen when parsing the JSON input.
@@ -49,6 +51,9 @@ pub enum JsonError {
 
     /// Wrong content type.
     WrongContentType,
+
+    /// Null escape sequence present.
+    NullPresent,
 
     /// Could not read the body from the request. Also happens if the body is not valid UTF-8.
     IoError(IoError),
@@ -90,6 +95,9 @@ impl fmt::Display for JsonError {
             JsonError::WrongContentType => {
                 "the request didn't have a JSON content type"
             },
+            JsonError::NullPresent => {
+                "the JSON body contained an escaped null byte"
+            },
             JsonError::IoError(_) => {
                 "could not read the body from the request, or could not execute the CGI program"
             },
@@ -102,9 +110,38 @@ impl fmt::Display for JsonError {
     }
 }
 
+/// Detect any NUL bytes present in strings in this JSON structure, and return an error if they
+/// are found.
+fn check_null(value: &Value) -> Result<&Value, JsonError> {
+    match &value {
+        Value::String(s) => {
+            if s.find("\0").is_some() {
+                return Err(JsonError::NullPresent);
+            }
+        },
+        Value::Array(a) => {
+            for element in a {
+                check_null(element)?;
+            }
+        },
+        Value::Object(o) => {
+            for (k, v) in o {
+                if k.find("\0").is_some() {
+                    return Err(JsonError::NullPresent);
+                }
+                check_null(v)?;
+            }
+        },
+        _ => (),
+    };
+    Ok(value)
+}
+
 /// Attempts to parse the request's body as JSON.
 ///
 /// Returns an error if the content-type of the request is not JSON, or if the JSON is malformed.
+///
+/// Does not permit escaped null codepoints.
 ///
 /// # Example
 ///
@@ -139,8 +176,75 @@ pub fn json_input<O>(request: &Request) -> Result<O, JsonError> where O: serde::
     }
 
     if let Some(b) = request.data() {
-        serde_json::from_reader::<_, O>(b).map_err(From::from)
+        let v: Value = serde_json::from_reader(b)?;
+        check_null(&v)?;
+        serde_json::from_value::<O>(v).map_err(From::from)
     } else {
         Err(JsonError::BodyAlreadyExtracted)
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_check_nulls() {
+        let data = r#"
+        {
+            "name": "John Doe",
+            "age": 43,
+            "phones": [
+                "+44 1234567",
+                "+44 2345678"
+            ],
+            "children": [
+                {
+                    "name": "Sarah\u0000"
+                },
+                {
+                    "name": "Bill\u0000"
+                }
+            ]
+        }"#;
+
+        let v: Value = serde_json::from_str(data).unwrap();
+        assert!(check_null(&v).is_err());
+    }
+
+    #[test]
+    fn test_key_nulls() {
+        let data = r#"
+        {
+            "name\u0000": "John Doe",
+            "age": 43
+        }"#;
+
+        let v: Value = serde_json::from_str(data).unwrap();
+        assert!(check_null(&v).is_err());
+    }
+
+    #[test]
+    fn test_check_not_null() {
+        let data = r#"
+        {
+            "name": "John Doe",
+            "age": 43,
+            "phones": [
+                "+44 1234567",
+                "+44 2345678"
+            ],
+            "children": [
+                {
+                    "name": "Sarah"
+                },
+                {
+                    "name": "Bill"
+                }
+            ]
+        }"#;
+
+        let v: Value = serde_json::from_str(data).unwrap();
+        assert!(check_null(&v).is_ok());
     }
 }

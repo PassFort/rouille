@@ -491,7 +491,7 @@ impl<F> Server<F> where F: Send + Sync + 'static + Fn(&Request) -> Response {
     /// 3) Wait for in-flight requests to be processed by using this method.
     /// 
     /// # Example
-    /// ```no_run
+    /// ```ignore
     /// // Accept connections until we receive a SIGTERM
     /// while !lifecycle.is_stopping() {
     ///     server.poll_timeout(Duration::from_millis(100));
