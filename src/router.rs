@@ -174,8 +174,7 @@ macro_rules! router {
                 let url_params = (|| {
                     let mut url_params = RouilleUrlParams::new();
                     for (actual, desired) in request_url.iter().zip(url_pattern.iter()) {
-                        if desired.starts_with("{") && desired.ends_with("}") {
-                            let key = &desired[1..desired.len()-1];
+                        if let Some(key) = desired.strip_prefix("{").and_then(|d| d.strip_suffix("}")) {
                             router!(__insert_param $request_url_str, url_params, key, actual ; $($param: $param_type)*)
                         } else if actual != desired {
                             return None
@@ -276,10 +275,7 @@ macro_rules! router {
     };
 
     (__check_pattern $url:ident $value:block /{$p:ident} $($rest:tt)*) => (
-        if !$url.starts_with('/') {
-            None
-        } else {
-            let url = &$url[1..];
+        if let Some(url) = $url.strip_prefix('/') {
             let pat_end = url.find('/').unwrap_or(url.len());
             let rest_url = &url[pat_end..];
 
@@ -288,14 +284,13 @@ macro_rules! router {
             } else {
                 None
             }
+        } else {
+            None
         }
     );
 
     (__check_pattern $url:ident $value:block /{$p:ident: $t:ty} $($rest:tt)*) => (
-        if !$url.starts_with('/') {
-            None
-        } else {
-            let url = &$url[1..];
+        if let Some(url) = $url.strip_prefix('/') {
             let pat_end = url.find('/').unwrap_or(url.len());
             let rest_url = &url[pat_end..];
 
@@ -306,14 +301,15 @@ macro_rules! router {
             } else {
                 None
             }
+        } else {
+            None
         }
     );
 
     (__check_pattern $url:ident $value:block /$p:ident $($rest:tt)*) => (
         {
             let required = concat!("/", stringify!($p));
-            if $url.starts_with(required) {
-                let rest_url = &$url[required.len()..];
+            if let Some(rest_url) = $url.strip_prefix(required) {
                 router!(__check_pattern rest_url $value $($rest)*)
             } else {
                 None
@@ -323,8 +319,7 @@ macro_rules! router {
 
     (__check_pattern $url:ident $value:block - $($rest:tt)*) => (
         {
-            if $url.starts_with('-') {
-                let rest_url = &$url[1..];
+            if let Some(rest_url) = $url.strip_prefix('-') {
                 router!(__check_pattern rest_url $value $($rest)*)
             } else {
                 None
@@ -343,8 +338,7 @@ macro_rules! router {
     (__check_pattern $url:ident $value:block $p:ident $($rest:tt)*) => (
         {
             let required = stringify!($p);
-            if $url.starts_with(required) {
-                let rest_url = &$url[required.len()..];
+            if let Some(rest_url) = $url.strip_prefix(required) {
                 router!(__check_pattern rest_url $value $($rest)*)
             } else {
                 None
